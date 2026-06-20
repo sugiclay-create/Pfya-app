@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=no">
+    <title>Aplikasi Menggambar Sederhana</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Roboto, Arial, sans-serif; }
+        body { background: #f0f0f0; }
+
+        .tool-bar {
+            background: #ffffff;
+            padding: 10px;
+            margin: 8px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .tool-btn {
+            padding: 9px 14px;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            background: #f8f9fa;
+            transition: all 0.2s;
+        }
+        .tool-btn.active {
+            background: #00adb5;
+            color: white;
+            border-color: #00adb5;
+        }
+        .tool-btn.small { padding: 6px 10px; font-size: 12px; }
+        .tool-btn.small.active { background: #00adb5; color: white; }
+        .color-input { width: 40px; height: 36px; border: none; background: none; cursor: pointer; }
+        .size-input { width: 120px; }
+        .recent-colors { display: flex; gap: 4px; margin-top: 5px; }
+        .color-box { width: 24px; height: 24px; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; }
+
+        .canvas-container {
+            margin: 0 8px;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            position: relative;
+            width: calc(100% - 16px);
+            height: calc(75vh - 50px);
+            background: #ffffff;
+        }
+        #canvas {
+            background: #ffffff;
+            touch-action: none;
+            display: block;
+        }
+        .zoom-info {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.6);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 20;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div class="tool-bar">
+    <button class="tool-btn active" id="drawBtn">🖌️ Kuas</button>
+    <button class="tool-btn" id="eraserBtn">🧹 Penghapus</button>
+    <button class="tool-btn" id="bucketBtn">🪣 Isi Warna</button>
+
+    <button class="tool-btn" id="undoBtn">↩️ Batal</button>
+    <button class="tool-btn" id="redoBtn">↪️ Ulangi</button>
+
+    <label>Warna: <input type="color" class="color-input" id="colorPicker" value="#000000"></label>
+    
+    <button class="tool-btn small" id="size1">1px</button>
+    <button class="tool-btn small" id="size5">5px</button>
+    <button class="tool-btn small active" id="size10">10px</button>
+    <button class="tool-btn small" id="size25">25px</button>
+    <button class="tool-btn small" id="size50">50px</button>
+    <input type="range" class="size-input" id="brushSize" min="1" max="100" value="10">
+
+    <button class="tool-btn small" id="bgWhite">Putih</button>
+    <button class="tool-btn small" id="bgGray">Abu</button>
+    <button class="tool-btn small" id="bgTrans">Transparan</button>
+    <button class="tool-btn" id="clearBtn">🗑️ Hapus Semua</button>
+    <button class="tool-btn" id="saveBtn">💾 Simpan</button>
+</div>
+
+<div class="tool-bar" style="margin-top:0;">
+    <span>Warna Terpakai:</span>
+    <div class="recent-colors" id="recentColors"></div>
+</div>
+
+<div class="canvas-container">
+    <canvas id="canvas" width="1200" height="900"></canvas>
+    <div class="zoom-info" id="zoomInfo">Ukuran: 1200 × 900px | Kuas: 10px</div>
+</div>
+
+<script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const zoomInfo = document.getElementById('zoomInfo');
+    const colorPicker = document.getElementById('colorPicker');
+    const recentColorsEl = document.getElementById('recentColors');
+
+    let mode = 'draw';
+    let isDrawing = false;
+    let brushSize = 10;
+
+    let history = [];
+    let historyIndex = -1;
+    let recentColors = ['#000000', '#ff0000', '#008000', '#0000ff', '#ffa500', '#800080'];
+
+    // Tampilkan warna terpakai
+    function updateRecent() {
+        recentColorsEl.innerHTML = '';
+        recentColors.forEach(c => {
+            const box = document.createElement('div');
+            box.className = 'color-box';
+            box.style.background = c;
+            box.onclick = () => colorPicker.value = c;
+            recentColorsEl.appendChild(box);
+        });
+    }
+    updateRecent();
+
+    function addRecent(color) {
+        if (!recentColors.includes(color)) {
+            recentColors.unshift(color);
+            if (recentColors.length > 8) recentColors.pop();
+            updateRecent();
+        }
+    }
+
+    // Simpan ke riwayat
+    function saveHistory() {
+        history = history.slice(0, historyIndex + 1);
+        history.push(canvas.toDataURL());
+        historyIndex = history.length - 1;
+        if (history.length > 30) history.shift();
+    }
+
+    // Perbarui tampilan ukuran
+    function updateInfo() {
+        zoomInfo.textContent = `Ukuran: ${canvas.width} × ${canvas.height}px | Kuas: ${brushSize}px`;
+    }
+
+    // Atur ukuran kuas
+    function setBrushSize(size) {
+        brushSize = size;
+        document.querySelectorAll('.small').forEach(b => b.classList.remove('active'));
+        document.getElementById(`size${size}`)?.classList.add('active');
+        document.getElementById('brushSize').value = size;
+        updateInfo();
+    }
+
+    document.getElementById('size1').onclick = () => setBrushSize(1);
+    document.getElementById('size5').onclick = () => setBrushSize(5);
+    document.getElementById('size10').onclick = () => setBrushSize(10);
+    document.getElementById('size25').onclick = () => setBrushSize(25);
+    document.getElementById('size50').onclick = () => setBrushSize(50);
+    document.getElementById('brushSize').addEventListener('input', (e) => setBrushSize(parseInt(e.target.value)));
+
+    // Pilih mode alat
+    function setMode(newMode) {
+        mode = newMode;
+        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById(newMode + 'Btn').classList.add('active');
+    }
+    document.getElementById('drawBtn').onclick = () => setMode('draw');
+    document.getElementById('eraserBtn').onclick = () => setMode('eraser');
+    document.getElementById('bucketBtn').onclick = () => setMode('bucket');
+
+    // Fungsi menggambar
+    canvas.addEventListener('mousedown', (e) => {
+        isDrawing = true;
+        ctx.beginPath();
+        ctx.moveTo(e.offsetX, e.offsetY);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = brushSize;
+
+        if (mode === 'draw') {
+            ctx.strokeStyle = colorPicker.value;
+            ctx.globalCompositeOperation = 'source-over';
+        } else if (mode === 'eraser') {
+            ctx.globalCompositeOperation = 'destination-out';
+        } else if (mode === 'bucket') {
+            addRecent(colorPicker.value);
+            floodFill(Math.floor(e.offsetX), Math.floor(e.offsetY), parseInt(colorPicker.value.replace('#', ''), 16));
+            saveHistory();
+            isDrawing = false;
+        }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (!isDrawing) return;
+        ctx.lineWidth = brushSize;
+        ctx.lineTo(e.offsetX, e.offsetY);
+        ctx.stroke();
+    });
+
+    canvas.addEventListener('mouseup', () => {
+        if (isDrawing) saveHistory();
+        isDrawing = false;
+    });
+    canvas.addEventListener('mouseout', () => {
+        if (isDrawing) saveHistory();
+        isDrawing = false;
+    });
+
+    // Layar sentuh HP
+    canvas.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const x = e.touches[0].clientX - rect.left;
+        const y = e.touches[0].clientY - rect.top;
+        isDrawing = true;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = brushSize;
+
+        if (mode === 'draw') {
+            ctx.strokeStyle = colorPicker.value;
+            ctx.globalCompositeOperation = 'source-over';
+        } else if (mode === 'eraser') {
+            ctx.globalCompositeOperation = 'destination-out';
+        } else if (mode === 'bucket') {
+            addRecent(colorPicker.value);
+            floodFill(Math.floor(x), Math.floor(y), parseInt(colorPicker.value.replace('#', ''), 16));
+            saveHistory();
+            isDrawing = false;
+        }
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', (e) => {
+        if (!isDrawing) return;
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const x = e.touches[0].clientX - rect.left;
+        const y = e.touches[0].clientY - rect.top;
+        ctx.lineWidth = brushSize;
+        ctx.lineTo(x, y);
+        ctx.stroke();
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', () => {
+        if (isDrawing) saveHistory();
+        isDrawing = false;
+    });
+
+    // Isi warna
+    function floodFill(x, y, color) {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        const target = getPixel(data, x, y);
+        if (target === color) return;
+        const stack = [[x, y]];
+        while (stack.length) {
+            const [cx, cy] = stack.pop();
+            if (cx < 0 || cx >= canvas.width || cy < 0 || cy >= canvas.height) continue;
+            if (getPixel(data, cx, cy) !== target) continue;
+            setPixel(data, cx, cy, color);
+            stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+        }
+        ctx.putImageData(imageData, 0, 0);
+    }
+    function getPixel(data, x, y) {
+        const pos = (y * canvas.width + x) * 4;
+        return (data[pos] << 16) | (data[pos + 1] << 8) | data[pos + 2];
+    }
+    function setPixel(data, x, y, color) {
+        const pos = (y * canvas.width + x) * 4;
+        data[pos] = (color >> 16) & 255;
+        data[pos + 1] = (color >> 8) & 255;
+        data[pos + 2] = color & 255;
+        data[pos + 3] = 255;
+    }
+
+    // Tombol lain
+    document.getElementById('bgWhite').onclick = () => canvas.style.background = '#ffffff';
+    document.getElementById('bgGray').onclick = () => canvas.style.background = '#f0f0f0';
+    document.getElementById('bgTrans').onclick = () => canvas.style.background = 'transparent';
+
+    document.getElementById('clearBtn').onclick = () => {
+        if (confirm('Hapus semua gambar?')) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            history = [];
+            saveHistory();
+        }
+    };
+
+    document.getElementById('saveBtn').onclick = () => {
+        const a = document.createElement('a');
+        a.download = 'GambarMenggambar.png';
+        a.href = canvas.toDataURL();
+        a.click();
+    };
+
+    document.getElementById('undoBtn').onclick = () => {
+        if (historyIndex > 0) {
+            historyIndex--;
+            const img = new Image();
+            img.src = history[historyIndex];
+            img.onload = () => {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+            };
+        }
+    };
+
+    document.getElementById('redoBtn').onclick = () => {
+        if (historyIndex < history.length - 1) {
+            historyIndex++;
+            const img = new Image();
+            img.src = history[historyIndex];
+            img.onload = () => {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+            };
+        }
+    };
+
+    // Awal
+    saveHistory();
+    updateInfo();
+</script>
+
+</body>
+</html>
